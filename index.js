@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const cron = require('node-cron');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const puppeteer = require('puppeteer');
@@ -26,30 +27,33 @@ app.get('/ping', (req, res) => {
   res.send('pong');
 });
 
-app.get('/qr', (req, res) => {
+app.get('/qr', async (req, res) => {
   if (whatsappReady) {
     return res.send('<h2>WhatsApp ya está conectado ✅</h2>');
   }
   if (!lastQr) {
     return res.send('<h2>Generando código QR, refresca en unos segundos...</h2>');
   }
-  // Usamos una librería ligera vía CDN para pintar el QR como imagen en el navegador
-  res.send(`
-    <html>
-      <body style="text-align:center; font-family:sans-serif;">
-        <h2>Escanea este QR con WhatsApp (Dispositivos vinculados)</h2>
-        <div id="qr"></div>
-        <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-        <script>
-          QRCode.toCanvas(document.createElement('canvas'), ${JSON.stringify(lastQr)}, function (err, canvas) {
-            document.getElementById('qr').appendChild(canvas);
-          });
-        </script>
-        <p>Esta página se refresca sola cada 5 segundos.</p>
-        <script>setTimeout(() => location.reload(), 5000);</script>
-      </body>
-    </html>
-  `);
+
+  try {
+    // Generamos la imagen del QR directamente en el servidor (PNG en base64),
+    // así no depende de ningún script externo ni de que el navegador lo permita.
+    const qrImageDataUrl = await QRCode.toDataURL(lastQr, { width: 300, margin: 2 });
+
+    res.send(`
+      <html>
+        <body style="text-align:center; font-family:sans-serif;">
+          <h2>Escanea este QR con WhatsApp (Dispositivos vinculados)</h2>
+          <img src="${qrImageDataUrl}" alt="Código QR" width="300" height="300" />
+          <p>Esta página se refresca sola cada 5 segundos.</p>
+          <script>setTimeout(() => location.reload(), 5000);</script>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('Error generando la imagen del QR:', err);
+    res.status(500).send('<h2>Error generando el QR, refresca la página.</h2>');
+  }
 });
 
 app.get('/citas', async (req, res) => {
