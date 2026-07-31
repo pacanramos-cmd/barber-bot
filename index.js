@@ -81,60 +81,68 @@ if (PUBLIC_URL) {
 }
 
 // ---------- Cliente de WhatsApp ----------
-const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: './data/wwebjs_auth' }),
-  puppeteer: {
-    headless: true,
-    executablePath: puppeteer.executablePath(),
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  }
-});
+// Se crea dentro de una función async porque, desde puppeteer v22+,
+// executablePath() devuelve una Promesa (antes devolvía el texto directo).
+let client;
 
-client.on('qr', (qr) => {
-  lastQr = qr;
-  console.log('Nuevo código QR generado. Ábrelo en /qr o escanea el que aparece abajo:');
-  qrcode.generate(qr, { small: true });
-});
-
-client.on('ready', () => {
-  whatsappReady = true;
-  console.log('✅ WhatsApp conectado y listo para recibir mensajes');
-});
-
-client.on('disconnected', (reason) => {
-  whatsappReady = false;
-  console.warn('WhatsApp se desconectó:', reason);
-});
-
-client.on('message', async (message) => {
-  // Ignoramos mensajes de grupos, solo atendemos chats individuales
-  const chat = await message.getChat();
-  if (chat.isGroup) return;
-
-  const chatId = message.from;
-  const text = message.body;
-
-  try {
-    const reply = await handleMessage(chatId, text);
-    if (reply) {
-      await client.sendMessage(chatId, reply);
+function setupClient(chromePath) {
+  client = new Client({
+    authStrategy: new LocalAuth({ dataPath: './data/wwebjs_auth' }),
+    puppeteer: {
+      headless: true,
+      executablePath: chromePath,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
-  } catch (err) {
-    console.error('Error procesando mensaje:', err);
-  }
-});
+  });
 
-// Comando de administración: el barbero puede escribir "!reset" en un chat
-// (desde su propio celular) para que el bot vuelva a atender ese chat
-// después de haber tomado control humano de la conversación.
-client.on('message_create', async (message) => {
-  if (!message.fromMe) return;
-  if (message.body.trim().toLowerCase() === '!reset') {
+  client.on('qr', (qr) => {
+    lastQr = qr;
+    console.log('Nuevo código QR generado. Ábrelo en /qr o escanea el que aparece abajo:');
+    qrcode.generate(qr, { small: true });
+  });
+
+  client.on('ready', () => {
+    whatsappReady = true;
+    console.log('✅ WhatsApp conectado y listo para recibir mensajes');
+  });
+
+  client.on('disconnected', (reason) => {
+    whatsappReady = false;
+    console.warn('WhatsApp se desconectó:', reason);
+  });
+
+  client.on('message', async (message) => {
+    // Ignoramos mensajes de grupos, solo atendemos chats individuales
     const chat = await message.getChat();
-    clearState(chat.id._serialized);
-    console.log(`Estado reiniciado para el chat ${chat.id._serialized}`);
-  }
-});
+    if (chat.isGroup) return;
+
+    const chatId = message.from;
+    const text = message.body;
+
+    try {
+      const reply = await handleMessage(chatId, text);
+      if (reply) {
+        await client.sendMessage(chatId, reply);
+      }
+    } catch (err) {
+      console.error('Error procesando mensaje:', err);
+    }
+  });
+
+  // Comando de administración: el barbero puede escribir "!reset" en un chat
+  // (desde su propio celular) para que el bot vuelva a atender ese chat
+  // después de haber tomado control humano de la conversación.
+  client.on('message_create', async (message) => {
+    if (!message.fromMe) return;
+    if (message.body.trim().toLowerCase() === '!reset') {
+      const chat = await message.getChat();
+      clearState(chat.id._serialized);
+      console.log(`Estado reiniciado para el chat ${chat.id._serialized}`);
+    }
+  });
+
+  client.initialize();
+}
 
 (async () => {
   try {
@@ -142,5 +150,8 @@ client.on('message_create', async (message) => {
   } catch (err) {
     console.error('No se pudo conectar/inicializar la base de datos (revisa DATABASE_URL):', err.message);
   }
-  client.initialize();
+
+  const chromePath = await puppeteer.executablePath();
+  console.log('Chrome encontrado en:', chromePath);
+  setupClient(chromePath);
 })();
