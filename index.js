@@ -91,7 +91,17 @@ function setupClient(chromePath) {
     puppeteer: {
       headless: true,
       executablePath: chromePath,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-extensions',
+        '--no-zygote',
+        '--single-process',
+        '--disable-software-rasterizer'
+      ]
     }
   });
 
