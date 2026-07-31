@@ -95,6 +95,7 @@ function setupClient(chromePath) {
     puppeteer: {
       headless: true,
       executablePath: chromePath,
+      defaultViewport: { width: 480, height: 800 },
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -104,15 +105,53 @@ function setupClient(chromePath) {
         '--disable-extensions',
         '--no-zygote',
         '--single-process',
-        '--disable-software-rasterizer'
+        '--disable-software-rasterizer',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--disable-translate',
+        '--metrics-recording-only',
+        '--mute-audio',
+        '--no-first-run',
+        '--safebrowsing-disable-auto-update',
+        '--js-flags=--max-old-space-size=192'
       ]
     }
   });
+
+  // Bloqueamos imágenes, medios y fuentes para ahorrar memoria RAM.
+  // Esto no afecta el funcionamiento del bot (solo maneja texto), y es
+  // justo lo que más memoria consume cuando WhatsApp Web sincroniza chats.
+  async function setupMediaBlocking() {
+    try {
+      if (client.pupPage && !client.pupPage.__interceptSetup) {
+        await client.pupPage.setRequestInterception(true);
+        client.pupPage.on('request', (req) => {
+          const blockedTypes = ['image', 'media', 'font'];
+          if (blockedTypes.includes(req.resourceType())) {
+            req.abort();
+          } else {
+            req.continue();
+          }
+        });
+        client.pupPage.__interceptSetup = true;
+        console.log('Bloqueo de imágenes/media activado para ahorrar memoria');
+      }
+    } catch (err) {
+      console.warn('No se pudo activar el bloqueo de media:', err.message);
+    }
+  }
 
   client.on('qr', (qr) => {
     lastQr = qr;
     console.log('Nuevo código QR generado. Ábrelo en /qr o escanea el que aparece abajo:');
     qrcode.generate(qr, { small: true });
+    setupMediaBlocking();
+  });
+
+  client.on('loading_screen', (percent, message) => {
+    console.log(`Cargando WhatsApp Web: ${percent}% - ${message}`);
+    setupMediaBlocking();
   });
 
   client.on('ready', () => {
