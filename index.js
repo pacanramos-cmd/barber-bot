@@ -3,6 +3,7 @@ const express = require('express');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const { Client, LocalAuth } = require('whatsapp-web.js');
+const puppeteer = require('puppeteer');
 const { handleMessage } = require('./lib/flow');
 const { initDb, clearState, listAppointments } = require('./lib/db');
 
@@ -84,6 +85,7 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './data/wwebjs_auth' }),
   puppeteer: {
     headless: true,
+    executablePath: puppeteer.executablePath(),
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   }
 });
