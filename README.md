@@ -1,115 +1,121 @@
-# Barber Bot 💈
+# Barber Bot 💈 (versión Twilio)
 
-Chatbot de WhatsApp para agendar citas con el barbero, usando palabras clave + IA de respaldo.
+Chatbot de WhatsApp para agendar citas con el barbero, usando el catálogo de 7 servicios, palabras clave + IA de respaldo, y **Twilio** para conectarse a WhatsApp (sin necesitar un navegador/Chrome corriendo).
 
-## ¿Cómo funciona?
+## ¿Por qué Twilio y no whatsapp-web.js?
 
-1. El cliente escribe al WhatsApp (número de prueba, después el del barbero).
-2. Si el mensaje trae palabras como "cita", "agendar", "peluquear", "corte", etc., el bot arranca el flujo de agendamiento.
-3. Si el cliente escribe algo como "quiero hablar con Peña", el bot avisa que ya no va a intervenir y deja que el barbero conteste directamente.
-4. Si el mensaje no es claro, primero se muestra un menú con 3 opciones (agendar / hablar con el barbero / ver info). Si tampoco eligen una opción clara, se usa la IA (Claude) para interpretar el mensaje.
-5. Las citas quedan guardadas en **Neon (Postgres)**, y además se copian automáticamente a una fila nueva en **Google Sheets**. También puedes ver todas las citas abriendo `/citas` en el navegador (te da un JSON).
+La primera versión usaba `whatsapp-web.js`, que necesita correr un Chrome completo detrás — eso consume mucha memoria RAM y no cabe en el plan gratis de Render (512 MB). Twilio es una API ligera: no necesita navegador, así que corre sin problema en cualquier plan gratis.
 
-## 0. Configurar Neon (la base de datos)
+**La diferencia importante:** con Twilio, los clientes ya no le escriben al número personal del barbero directamente, sino a un número especial que te da Twilio (el "Sandbox" mientras estemos en modo de prueba). Más abajo se explica cómo funciona esto.
 
-1. Crea cuenta gratis en [neon.tech](https://neon.tech) (no pide tarjeta).
-2. Crea un proyecto nuevo (ej: "barber-bot").
-3. En el dashboard del proyecto, click en **Connect** y copia la **Connection string** (elige la opción "Pooled connection", termina en `-pooler`).
-4. Esa cadena es tu `DATABASE_URL`. Se ve algo así: `postgresql://usuario:password@ep-xxxx-pooler.region.aws.neon.tech/neondb?sslmode=require`
-5. No necesitas crear tablas a mano — el bot las crea solo la primera vez que arranca.
+## ¿Cómo funciona el flujo?
 
-## 0.1 Configurar Google Sheets (copia automática de citas)
+1. El cliente le escribe al número de WhatsApp de Twilio.
+2. Twilio reenvía ese mensaje a nuestro servidor (a la URL `/webhook/whatsapp`).
+3. El bot decide la respuesta (menú, servicio, fecha, etc. — misma lógica de siempre) y se la devuelve a Twilio, que se la manda al cliente.
+4. Si el cliente pide hablar con el barbero, el bot dejar de responder ahí y ese chat aparece en el **panel de administración** (`/admin`), donde el barbero puede escribirle manualmente desde una página web sencilla.
+5. Las citas se guardan en Neon (Postgres) y se copian a Google Sheets, igual que antes.
 
-1. Crea (o reutiliza) una hoja de Google Sheets. Dentro, crea una pestaña llamada exactamente **Citas**, con encabezados en la fila 1: `Fecha | Nombre | Servicio | Detalle | Cuándo | Precio | Chat ID`.
-2. Ve a [Google Cloud Console](https://console.cloud.google.com/), crea un proyecto (o usa uno existente) y activa la **Google Sheets API**.
-3. Ve a "Credenciales" > "Crear credenciales" > **Cuenta de servicio**. Créala y, dentro de ella, genera una **clave nueva en formato JSON** — se descarga un archivo.
-4. Abre ese archivo JSON: ahí están `client_email` (es tu `GOOGLE_SERVICE_ACCOUNT_EMAIL`) y `private_key` (es tu `GOOGLE_PRIVATE_KEY`).
-5. Abre tu Google Sheet, dale click a **Compartir**, y comparte la hoja con el correo de la cuenta de servicio (el `client_email`) dándole permiso de **Editor**.
-6. El `GOOGLE_SHEET_ID` es el código que está en la URL de tu hoja: `docs.google.com/spreadsheets/d/AQUÍ_ESTÁ_EL_ID/edit`.
+## 0. Configurar Twilio (el Sandbox de WhatsApp, gratis)
 
-Si no configuras estas variables, el bot sigue funcionando normal (solo guarda en Neon y omite la copia a Sheets).
+1. Crea una cuenta gratis en [twilio.com/try-twilio](https://www.twilio.com/try-twilio) (te da crédito de prueba, no necesitas tarjeta para el Sandbox).
+2. En el dashboard, busca **Messaging → Try it out → Send a WhatsApp message** (o busca "WhatsApp Sandbox" en el buscador de Twilio).
+3. Ahí Twilio te da:
+   - Un número de WhatsApp (siempre es el mismo para todos en modo sandbox: `+1 415 523 8886`)
+   - Un código de activación único, tipo `join palabra-clave`
+4. Copia el **Account SID** y el **Auth Token** (están en el dashboard principal de Twilio) — esos son tus `TWILIO_ACCOUNT_SID` y `TWILIO_AUTH_TOKEN`.
+5. Tu `TWILIO_WHATSAPP_NUMBER` es: `whatsapp:+14155238886`
 
-## 0.2 Configurar el respaldo de IA (Gemini, gratis)
+### ⚠️ Limitación importante del modo Sandbox (léelo antes de probar)
+Mientras estés en modo de prueba (sin pagar), **cada persona que quiera chatear con el bot** (incluyendo tú, el barbero, y cada cliente) **primero tiene que mandarle al número de Twilio el mensaje `join palabra-clave`** (la palabra que te dé tu sandbox) desde su propio WhatsApp. Solo se hace una vez por número, pero es un paso extra que no existía con el número personal. Es la única forma de probar gratis; si más adelante el negocio ya está funcionando de verdad, ahí se puede pedir un número de WhatsApp Business real con Twilio (ya no sandbox), lo cual sí tiene un costo pequeño por mensaje.
 
-1. Ve a [aistudio.google.com/apikey](https://aistudio.google.com/apikey) e inicia sesión con tu cuenta de Google (puede ser la misma que usaste para Sheets).
-2. Click en **Create API Key** (o "Crear clave de API"). No pide tarjeta ni datos de facturación.
-3. Copia esa llave — es tu `GEMINI_API_KEY`.
+## 1. Configurar el webhook de Twilio
 
-Esta llave es completamente gratis y no vence. Tiene un límite de 1,500 mensajes al día, más que suficiente para una barbería. Si no la configuras, el bot igual funciona con el menú y las palabras clave, solo se salta este paso de IA extra para mensajes ambiguos.
+Una vez que tengas el bot desplegado en Render (ver más abajo) y tengas su URL pública:
 
-## 1. Probarlo en tu computadora primero
+1. Ve a la consola de Twilio → **Messaging → Try it out → WhatsApp Sandbox Settings** (o busca "Sandbox settings").
+2. En el campo **"When a message comes in"**, pega: `https://tu-url.onrender.com/webhook/whatsapp`
+3. Método: **HTTP POST**
+4. Guarda.
+
+Listo — desde ese momento, cualquier mensaje que le llegue al número de Twilio se reenvía a tu bot.
+
+## 2. Probarlo en tu computadora primero
 
 ```bash
 npm install
 cp .env.example .env
 ```
 
-Abre `.env` y llena al menos:
-- `DATABASE_URL` (la de Neon, ver paso 0 arriba — sin esta, el bot no puede guardar citas)
-- `BARBER_NAME` (opcional, por defecto "el barbero")
-- `GEMINI_API_KEY` (opcional al inicio, y gratis — sin ella, el bot funciona solo con palabras clave y menú, sin el respaldo de IA)
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_SHEET_ID` (opcionales — sin ellas, el bot guarda igual en Neon, solo omite la copia a Sheets)
+Llena tu `.env` con las variables de Twilio, Neon, etc. (ver `.env.example`).
 
-Luego corre:
+Para probar localmente necesitas exponer tu compu a internet temporalmente (Twilio necesita una URL pública para mandarte el webhook). La forma más fácil es con [ngrok](https://ngrok.com) (gratis):
 ```bash
 npm start
+# en otra terminal:
+ngrok http 3000
 ```
+Copia la URL que te da ngrok (tipo `https://algo.ngrok-free.app`) y ponla en el Sandbox de Twilio como se explicó arriba, agregando `/webhook/whatsapp` al final.
 
-Te va a aparecer un código QR en la consola. Ábrelo con WhatsApp en el celular de PRUEBA:
-`WhatsApp > Configuración > Dispositivos vinculados > Vincular un dispositivo`.
+## 3. Subirlo a Render (gratis)
 
-También puedes abrir `http://localhost:3000/qr` en el navegador para escanearlo más grande.
-
-Una vez conectado, escríbele al número de prueba desde otro celular y prueba el flujo.
-
-## 2. Subirlo a Render (gratis)
-
-1. Sube esta carpeta a un repositorio de GitHub.
-2. En [render.com](https://render.com), crea un **Web Service** nuevo, conectado a ese repo.
+1. Sube esta carpeta a tu repo de GitHub (reemplazando los archivos viejos).
+2. En [render.com](https://render.com), crea un **Web Service** nuevo conectado a ese repo.
 3. Configuración:
    - **Build command:** `npm install`
    - **Start command:** `npm start`
    - **Plan:** Free
-4. En la sección **Environment**, agrega las mismas variables que en `.env`:
-   - `DATABASE_URL` (la de Neon)
+4. En **Environment Variables**, agrega todas las de tu `.env`:
+   - `TWILIO_ACCOUNT_SID`
+   - `TWILIO_AUTH_TOKEN`
+   - `TWILIO_WHATSAPP_NUMBER`
+   - `ADMIN_SECRET` (invéntate una clave larga y única)
+   - `DATABASE_URL`
+   - `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_SHEET_ID`
    - `BARBER_NAME`
-   - `GEMINI_API_KEY` (gratis, sin tarjeta)
-   - `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_SHEET_ID` (si quieres la copia a Sheets)
-   - `PUBLIC_URL` → aquí pon la URL que Render te asigna, ej: `https://barber-bot-xxxx.onrender.com` (la sabes después del primer deploy, y luego la agregas y vuelve a desplegar)
+   - `GEMINI_API_KEY`
+5. Dale **Create Web Service**. Esta vez el build es rápido (ya no descarga Chrome).
+6. Cuando termine, copia la URL pública y agrégala también como variable `PUBLIC_URL`, y ponla en el Sandbox de Twilio como se explicó en el paso 1.
 
-   ⚠️ Al pegar `GOOGLE_PRIVATE_KEY` en Render, cópiala tal cual viene en el JSON descargado (incluyendo los `\n` como texto) — el código ya se encarga de convertirlos en saltos de línea reales.
-5. Cuando termine el deploy, entra a los **Logs** del servicio en Render — ahí vas a ver el QR en texto, o simplemente abre `https://tu-url.onrender.com/qr` en el navegador y escanéalo con el WhatsApp de prueba.
+## 4. Probar todo
 
-### Importante sobre que Render no se duerma
-Ya dejé programado un auto-ping cada 4 minutos usando `PUBLIC_URL` (usa el mismo servicio para pingearse a sí mismo). Como respaldo extra, también puedes registrar la URL en [UptimeRobot](https://uptimerobot.com) (gratis) para que la visite cada 5 minutos desde afuera — es más confiable que el auto-ping interno.
+1. Desde tu celular, mándale al número de Twilio (`+1 415 523 8886`) el mensaje `join palabra-clave` (la tuya).
+2. Cuando confirme la activación, mándale "hola" — debería responder con el menú.
+3. Prueba el flujo completo de agendar una cita.
+4. Prueba escribir "quiero hablar con el barbero" — el bot debe avisar que ya no va a responder ahí.
+5. Entra a `https://tu-url.onrender.com/admin?secret=TU_ADMIN_SECRET` — deberías ver ese chat en la lista, con la opción de responderle manualmente o reactivar el bot.
 
-### Sobre la sesión de WhatsApp
-Render Free no tiene disco persistente garantizado entre reinicios, así que de vez en cuando (cuando Render reinicie el servicio) vas a tener que volver a escanear el QR en `/qr`. Esto **ya no afecta las citas** (esas viven seguras en Neon) — solo significa que el vínculo del WhatsApp se puede desconectar y hay que reconectar. Para un prototipo está bien; si más adelante se vuelve el bot "oficial", conviene un plan con disco persistente o la API oficial de WhatsApp.
+## 5. El panel del barbero (`/admin`)
 
-## 3. Cuando quieras que el barbero retome la conversación manualmente
+Es una página sencilla (sin diseño, solo funcional) donde el barbero puede:
+- Ver qué clientes están esperando que él responda directamente.
+- Escribirles un mensaje manual desde ahí (se manda por WhatsApp real vía Twilio).
+- Reactivar el bot para ese chat, cuando ya terminó de atenderlo en persona.
 
-Si el bot ya le dijo a un cliente "ya le avisé al barbero", el bot deja de responder en ese chat. Cuando el barbero termine de hablar con ese cliente y quiera que el bot vuelva a atender ese número, basta con que escriba **`!reset`** en ese mismo chat desde su propio celular, y el bot retoma el control ahí.
+Se accede así: `https://tu-url.onrender.com/admin?secret=LO_QUE_PUSISTE_EN_ADMIN_SECRET`
 
-## 4. Ajustar servicios, precios, palabras clave o menú
+Guarda esa URL completa (con la clave) en los favoritos del navegador del barbero.
 
-- **Servicios y precios (los 7 que maneja el barbero):** `lib/services.js` — cámbialos ahí, todo lo demás se actualiza solo.
+## 6. Ajustar servicios, precios, palabras clave o menú
+
+- **Servicios y precios:** `lib/services.js`
 - Palabras clave: `lib/keywords.js`
 - Textos del menú principal: `lib/flow.js`
-- Prompt que usa la IA para interpretar mensajes ambiguos: `lib/ai.js`
+- Prompt de la IA de respaldo (Gemini): `lib/ai.js`
 
 ## Estructura del proyecto
 
 ```
 barber-bot/
-├── index.js          # servidor + conexión a WhatsApp + keep-alive
+├── index.js             # servidor Express + webhook de Twilio + panel /admin
 ├── lib/
-│   ├── db.js           # conexión a Neon/Postgres (citas y estado de conversación)
-│   ├── sheets.js        # copia automática de citas a Google Sheets
-│   ├── services.js      # catálogo de servicios y precios (edítalo aquí)
-│   ├── keywords.js      # detección de palabras clave
-│   ├── flow.js          # flujo de la conversación (menú, agendar, etc.)
-│   └── ai.js            # respaldo con IA (Gemini, gratis) para mensajes ambiguos
-├── data/                # aquí se guarda solo la sesión de WhatsApp (wwebjs_auth)
+│   ├── db.js              # conexión a Neon/Postgres (citas y estado de conversación)
+│   ├── sheets.js           # copia automática de citas a Google Sheets
+│   ├── twilioClient.js     # envío de mensajes manuales desde el panel /admin
+│   ├── services.js         # catálogo de servicios y precios (edítalo aquí)
+│   ├── keywords.js         # detección de palabras clave
+│   ├── flow.js             # flujo de la conversación (menú, agendar, etc.)
+│   └── ai.js               # respaldo con IA (Gemini, gratis) para mensajes ambiguos
 ├── .env.example
 └── package.json
 ```
